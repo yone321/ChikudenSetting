@@ -34,6 +34,8 @@ WEBページのボタン → GitHub API（workflow_dispatch）→ GitHub Actions
 - ブラウザから `jepx.jp` へ直接アクセスできないため、`.github/workflows/fetch_jepx.yml` が
   `fetch_jepx.py` でCSVを取得し、`docs/jepx_chubu.json` に保存・コミットします
   （日本時間 00:10 / 10:50 / 11:30 / 14:00 に自動実行。初回は Actions タブから手動実行してください）
+  取得方法はJEPX-main（動作確認済み）に合わせ、暦年ごとの `spot_YYYY.csv` を直接取得し、失敗時はJEPXのページからCSVリンクを探索します。
+  GitHub自身のcronは遅れることがあるため、JEPX-mainと同様に外部cronサービスから `fetch_jepx.yml` の `workflow_dispatch` を送ることもできます。
 
 ## 手動実行
 
