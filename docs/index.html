@@ -6,7 +6,8 @@
 <title>蓄電池モード設定</title>
 <style>
   :root { --bg:#f4f6f8; --card:#fff; --text:#1c2733; --muted:#6b7785; --line:#d8dee4;
-          --green:#2e9e5b; --econ:#2b6fd6; --danger:#c0392b; }
+          --green:#2e9e5b; --econ:#2b6fd6; --danger:#c0392b;
+          --cheap:#1fa35c; --normal:#4a76b8; --sel:rgba(255,193,7,.28); --selStrong:rgba(255,193,7,.55); }
   @media (prefers-color-scheme: dark) {
     :root { --bg:#12181e; --card:#1b242d; --text:#e8edf2; --muted:#93a0ad; --line:#2d3945; }
   }
@@ -36,6 +37,16 @@
   details .field { margin-top:12px; }
   details .field label { display:block; font-size:.85rem; color:var(--muted); margin-bottom:4px; }
   details .field input { width:100%; }
+  #chartCaption { font-weight:700; font-size:.95rem; margin:0 0 4px; }
+  #chartMeta { font-size:.78rem; color:var(--muted); margin:0 0 8px; }
+  #chart { width:100%; height:auto; display:block; touch-action:manipulation; }
+  #chart text { fill:var(--muted); font-size:11px; }
+  .legend { display:flex; gap:16px; flex-wrap:wrap; font-size:.8rem; color:var(--muted); margin:8px 0 0; }
+  .sw { display:inline-block; width:14px; height:4px; border-radius:2px; margin-right:6px; vertical-align:middle; }
+  #chartInfo { font-size:.9rem; line-height:1.6; margin-top:8px; min-height:3.2em; }
+  #chartInfo .warn { color:var(--danger); }
+  button.small { font-size:.8rem; padding:6px 10px; border:1px solid var(--line); border-radius:8px;
+                 background:var(--bg); color:var(--text); cursor:pointer; margin-top:8px; }
   a { color:var(--econ); }
 </style>
 </head>
@@ -65,6 +76,19 @@
   </section>
 
   <div class="card"><div id="status" role="status" aria-live="polite"></div></div>
+
+  <section class="card">
+    <h2>JEPX 中部エリア価格（30分コマ）</h2>
+    <p id="chartCaption">読み込み中…</p>
+    <p id="chartMeta"></p>
+    <svg id="chart" viewBox="0 0 640 320" role="img" aria-label="中部エリアの30分コマ価格グラフ"></svg>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--cheap)"></i>13円/kWh未満</span>
+      <span><i class="sw" style="background:var(--normal)"></i>13円/kWh以上</span>
+    </div>
+    <div id="chartInfo">グラフをクリックすると、その時刻から充電する設定を経済モードのコンボボックスに入力します。</div>
+    <button type="button" id="btnReload" class="small">価格データを再読込</button>
+  </section>
 
   <details class="card" id="settings">
     <summary>接続設定（GitHub）</summary>
@@ -190,6 +214,170 @@
     if (!confirm(`経済モード（充電 ${sh}:${sm} 〜 ${eh}:${em}）に設定します。よろしいですか？\n（設定は即時反映されます）`)) return;
     dispatch({ mode: "economy", start_hour: sh, start_minute: sm, end_hour: eh, end_minute: em }, "経済モード");
   });
+  // ===== JEPX 中部エリア価格グラフ =====
+  const THRESHOLD = 13;
+  const SVGNS = "http://www.w3.org/2000/svg";
+  const slotTime = (i) => (i >= 48 ? "24:00" : pad(Math.floor(i / 2)) + ":" + (i % 2 ? "30" : "00"));
+  const fmtPrice = (p) => p.toFixed(2);
+
+  // 日本時間の日付(YYYY-MM-DD)。offsetDays日後
+  function jstDate(offsetDays) {
+    const d = new Date(Date.now() + 9 * 3600 * 1000 + offsetDays * 86400 * 1000);
+    return d.getUTCFullYear() + "-" + pad(d.getUTCMonth() + 1) + "-" + pad(d.getUTCDate());
+  }
+  function dateLabel(iso) {
+    const [y, m, d] = iso.split("-").map(Number);
+    const w = "日月火水木金土"[new Date(Date.UTC(y, m - 1, d)).getUTCDay()];
+    return `${y}年${m}月${d}日（${w}）`;
+  }
+
+  // クリックしたコマ(i)以降で13円未満となる最後のコマの番号を返す（無ければ -1）
+  function lastCheapSlotFrom(prices, i) {
+    for (let j = prices.length - 1; j >= i; j--) if (prices[j] < THRESHOLD) return j;
+    return -1;
+  }
+
+  let chartState = { prices: null, sel: null };
+
+  async function loadPrices() {
+    const urls = ["jepx_chubu.json"];
+    const repo = $("repo").value.trim();
+    const ref = $("ref").value.trim() || "main";
+    if (/^[\w.-]+\/[\w.-]+$/.test(repo)) {
+      urls.push(`https://raw.githubusercontent.com/${repo}/${ref}/docs/jepx_chubu.json`);
+    }
+    for (const u of urls) {
+      try {
+        const r = await fetch(u + "?_=" + Date.now(), { cache: "no-store" });
+        if (r.ok) return await r.json();
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  async function initChart() {
+    const cap = $("chartCaption"), meta = $("chartMeta"), svg = $("chart");
+    cap.textContent = "読み込み中…"; meta.textContent = "";
+    chartState = { prices: null, sel: null };
+    svg.innerHTML = "";
+    const data = await loadPrices();
+    if (!data || !data.days) {
+      cap.textContent = "価格データを読み込めませんでした。";
+      meta.textContent = "Actionsの「Fetch JEPX Chubu Prices」を一度手動実行し、反映後に再読込してください。";
+      return;
+    }
+    const today = jstDate(0), tomorrow = jstDate(1);
+    let day = null, kind = "";
+    if (Array.isArray(data.days[tomorrow]) && data.days[tomorrow].length === 48) { day = tomorrow; kind = "翌日分"; }
+    else if (Array.isArray(data.days[today]) && data.days[today].length === 48) { day = today; kind = "当日分・翌日分は未公表"; }
+    if (!day) {
+      cap.textContent = "表示できる価格データがありません（保存データが古い可能性があります）。";
+      meta.textContent = data.updated ? `データ更新: ${data.updated} JST` : "";
+      return;
+    }
+    chartState.prices = data.days[day];
+    cap.textContent = `${dateLabel(day)} 中部エリア価格（${kind}）`;
+    meta.textContent = (data.updated ? `データ更新: ${data.updated} JST ／ ` : "") + "単位: 円/kWh";
+    drawChart();
+  }
+
+  function el(name, attrs, parent) {
+    const e = document.createElementNS(SVGNS, name);
+    for (const k in attrs) {
+      if (k === "style") e.setAttribute("style", attrs[k]); else e.setAttribute(k, attrs[k]);
+    }
+    if (parent) parent.appendChild(e);
+    return e;
+  }
+
+  function drawChart() {
+    const prices = chartState.prices, svg = $("chart");
+    svg.innerHTML = "";
+    const W = 640, H = 320, L = 42, R = 12, T = 12, B = 30;
+    const pw = W - L - R, ph = H - T - B;
+    const maxP = Math.max(...prices, THRESHOLD + 2), minP = Math.min(0, ...prices);
+    const rawStep = (maxP - minP) / 6;
+    const step = [1, 2, 5, 10, 20, 50].find((s) => s >= rawStep) || 50;
+    const yMax = Math.ceil(maxP / step) * step, yMin = Math.floor(minP / step) * step;
+    const x = (i) => L + (pw * i) / 48;
+    const y = (v) => T + ph * (1 - (v - yMin) / (yMax - yMin));
+
+    // 目盛り
+    for (let v = yMin; v <= yMax + 1e-9; v += step) {
+      el("line", { x1: L, x2: W - R, y1: y(v), y2: y(v), style: "stroke:var(--line);stroke-width:1" }, svg);
+      const t = el("text", { x: L - 6, y: y(v) + 4, "text-anchor": "end" }, svg);
+      t.textContent = v;
+    }
+    for (let h = 0; h <= 24; h += 3) {
+      const t = el("text", { x: x(h * 2), y: H - 10, "text-anchor": "middle" }, svg);
+      t.textContent = h;
+    }
+
+    // 選択範囲(クリック位置〜終了)の帯
+    if (chartState.sel) {
+      const { start, endSlot } = chartState.sel; // endSlot: 終了コマ(含む)
+      el("rect", { x: x(start), y: T, width: x(endSlot + 1) - x(start), height: ph, style: "fill:var(--sel)" }, svg);
+      el("rect", { x: x(start), y: T, width: x(start + 1) - x(start), height: ph, style: "fill:var(--selStrong)" }, svg);
+    }
+
+    // 13円ライン
+    el("line", { x1: L, x2: W - R, y1: y(THRESHOLD), y2: y(THRESHOLD),
+                 style: "stroke:var(--cheap);stroke-width:1.2;stroke-dasharray:5 4" }, svg);
+    const tl = el("text", { x: W - R - 2, y: y(THRESHOLD) - 4, "text-anchor": "end" }, svg);
+    tl.textContent = THRESHOLD + "円";
+
+    // 30分コマごとの階段状の線（13円未満は色を変更）
+    prices.forEach((p, i) => {
+      const color = p < THRESHOLD ? "var(--cheap)" : "var(--normal)";
+      el("rect", { x: x(i), y: y(p), width: x(i + 1) - x(i), height: Math.max(0, y(yMin) - y(p)),
+                   style: `fill:${color};opacity:.13` }, svg);
+      const d = (i > 0 ? `M${x(i)},${y(prices[i - 1])} V${y(p)} ` : `M${x(i)},${y(p)} `) + `H${x(i + 1)}`;
+      el("path", { d, style: `fill:none;stroke:${color};stroke-width:3;stroke-linejoin:round;stroke-linecap:round` }, svg);
+    });
+
+    // クリック判定用の透明な縦帯（各コマ）
+    prices.forEach((p, i) => {
+      const r = el("rect", { x: x(i), y: T, width: x(i + 1) - x(i), height: ph,
+                             style: "fill:transparent;cursor:pointer" }, svg);
+      const ti = el("title", {}, r);
+      ti.textContent = `${slotTime(i)}〜${slotTime(i + 1)}  ${fmtPrice(p)}円/kWh`;
+      r.addEventListener("click", () => onSlotClick(i));
+    });
+  }
+
+  function onSlotClick(i) {
+    const prices = chartState.prices;
+    const p = prices[i];
+    const j = lastCheapSlotFrom(prices, i);
+    let endSlot, endIdx, note;
+    if (j >= 0) {
+      endSlot = j;
+      endIdx = j + 1;                 // 終了時刻は、そのコマの終わり
+      note = `13円未満の最後のコマ ${slotTime(j)}〜${slotTime(j + 1)}（${fmtPrice(prices[j])}円）`;
+      if (endIdx >= 48) { endIdx = 47; note += "。終了は23:30（コンボボックスの上限）"; }
+    } else {
+      endSlot = i;
+      endIdx = Math.min(i + 1, 47);
+      note = `<span class="warn">この時刻以降に13円未満のコマがありません。終了は開始の30分後にしました</span>`;
+    }
+    if (endIdx <= i) endIdx = Math.min(i + 1, 47);
+
+    $("startHour").value = pad(Math.floor(i / 2));
+    $("startMinute").value = i % 2 ? "30" : "00";
+    $("endHour").value = pad(Math.floor(endIdx / 2));
+    $("endMinute").value = endIdx % 2 ? "30" : "00";
+    save();
+
+    chartState.sel = { start: i, endSlot: Math.max(endSlot, i) };
+    drawChart();
+    $("chartInfo").innerHTML =
+      `選択: <b>${slotTime(i)}〜${slotTime(i + 1)}</b>　<b>${fmtPrice(p)}円/kWh</b>${p < THRESHOLD ? "（13円未満）" : "（13円以上）"}<br>` +
+      `経済モード設定: 開始 <b>${slotTime(i)}</b> ／ 終了 <b>${slotTime(endIdx)}</b>（${note}）`;
+  }
+
+  $("btnReload").addEventListener("click", initChart);
+  $("repo").addEventListener("change", initChart);
+  initChart();
 })();
 </script>
 </body>

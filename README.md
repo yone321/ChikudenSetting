@@ -22,6 +22,19 @@ WEBページのボタン → GitHub API（workflow_dispatch）→ GitHub Actions
 
 `docs/index.html` はローカルで直接開いても動作します。
 
+## JEPX価格グラフ
+
+ページ下部に、JEPX中部エリアの30分コマ価格グラフを表示します。
+
+- 翌日分が公表済みなら翌日、未公表なら当日のグラフを表示（見出しに日付を表示）
+- 13円/kWh未満のコマは緑、それ以外は青
+- グラフをクリックすると、そのコマの時刻と価格を表示し、経済モードのコンボボックスに入力
+  - 開始 = クリックしたコマの開始時刻
+  - 終了 = クリックしたコマ以降で13円未満となる最後のコマの終了時刻（上限23:30）
+- ブラウザから `jepx.jp` へ直接アクセスできないため、`.github/workflows/fetch_jepx.yml` が
+  `fetch_jepx.py` でCSVを取得し、`docs/jepx_chubu.json` に保存・コミットします
+  （日本時間 00:10 / 10:50 / 11:30 / 14:00 に自動実行。初回は Actions タブから手動実行してください）
+
 ## 手動実行
 
 Actions タブ → Battery Setup Automation → Run workflow からも、モードと時刻を指定して実行できます。
