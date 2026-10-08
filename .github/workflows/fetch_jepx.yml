@@ -1,0 +1,45 @@
+name: Fetch JEPX Chubu Prices
+
+on:
+  workflow_dispatch:
+  schedule:
+    # 日本時間 00:10 / 10:50 / 11:30 / 14:00（UTCで指定。数十分の遅れは許容）
+    - cron: '10 15 * * *'
+    - cron: '50 1 * * *'
+    - cron: '30 2 * * *'
+    - cron: '0 5 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: fetch-jepx
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Python環境のセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: JEPX中部エリア価格の取得
+        run: python fetch_jepx.py
+
+      - name: 変更があればコミット
+        run: |
+          if [ -n "$(git status --porcelain docs/jepx_chubu.json)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add docs/jepx_chubu.json
+            git commit -m "Update JEPX Chubu prices"
+            git pull --rebase
+            git push
+          else
+            echo "変更なし"
+          fi
