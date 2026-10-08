@@ -128,7 +128,7 @@
     });
   }
   const hours = Array.from({ length: 24 }, (_, i) => pad(i));
-  const minutes = ["00", "30"];
+  const minutes = ["00", "10", "20", "30", "40", "50"];
   fill($("startHour"), hours, "05");  fill($("startMinute"), minutes, "00");
   fill($("endHour"), hours, "15");    fill($("endMinute"), minutes, "00");
 
@@ -216,6 +216,7 @@
   });
   // ===== JEPX 中部エリア価格グラフ =====
   const THRESHOLD = 13;
+  const START_OFFSET_MIN = 10;   // 蓄電池の設定にかかる時間を見込み、クリックしたコマの何分前から開始するか
   const SVGNS = "http://www.w3.org/2000/svg";
   const slotTime = (i) => (i >= 48 ? "24:00" : pad(Math.floor(i / 2)) + ":" + (i % 2 ? "30" : "00"));
   const fmtPrice = (p) => p.toFixed(2);
@@ -358,12 +359,15 @@
     } else {
       endSlot = i;
       endIdx = Math.min(i + 1, 47);
-      note = `<span class="warn">この時刻以降に13円未満のコマがありません。終了は開始の30分後にしました</span>`;
+      note = `<span class="warn">この時刻以降に13円未満のコマがありません。終了はそのコマの終わりにしました</span>`;
     }
     if (endIdx <= i) endIdx = Math.min(i + 1, 47);
 
-    $("startHour").value = pad(Math.floor(i / 2));
-    $("startMinute").value = i % 2 ? "30" : "00";
+    // 開始はクリックしたコマの開始時刻の START_OFFSET_MIN 分前（0:00より前にはしない）
+    const startMin = Math.max(0, i * 30 - START_OFFSET_MIN);
+    const startLabel = pad(Math.floor(startMin / 60)) + ":" + pad(startMin % 60);
+    $("startHour").value = pad(Math.floor(startMin / 60));
+    $("startMinute").value = pad(startMin % 60);
     $("endHour").value = pad(Math.floor(endIdx / 2));
     $("endMinute").value = endIdx % 2 ? "30" : "00";
     save();
@@ -372,7 +376,7 @@
     drawChart();
     $("chartInfo").innerHTML =
       `選択: <b>${slotTime(i)}〜${slotTime(i + 1)}</b>　<b>${fmtPrice(p)}円/kWh</b>${p < THRESHOLD ? "（13円未満）" : "（13円以上）"}<br>` +
-      `経済モード設定: 開始 <b>${slotTime(i)}</b> ／ 終了 <b>${slotTime(endIdx)}</b>（${note}）`;
+      `経済モード設定: 開始 <b>${startLabel}</b>（${START_OFFSET_MIN > 0 && i > 0 ? "コマの開始の" + START_OFFSET_MIN + "分前" : "コマの開始時刻"}） ／ 終了 <b>${slotTime(endIdx)}</b>（${note}）`;
   }
 
   $("btnReload").addEventListener("click", initChart);
