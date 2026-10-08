@@ -1,1 +1,103 @@
+name: Battery Setup Automation
 
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '蓄電動作モード（green=グリーンモード / economy=経済モード）'
+        required: true
+        default: 'economy'
+        type: choice
+        options:
+          - green
+          - economy
+      start_hour:
+        description: '充電開始の時（例: 05）。グリーンモードで空欄なら月に応じて自動'
+        required: false
+        default: ''
+        type: string
+      start_minute:
+        description: '充電開始の分（例: 00）'
+        required: false
+        default: ''
+        type: string
+      end_hour:
+        description: '充電終了の時（例: 15）'
+        required: false
+        default: ''
+        type: string
+      end_minute:
+        description: '充電終了の分（例: 00）'
+        required: false
+        default: ''
+        type: string
+
+jobs:
+  run-automation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v3
+
+      - name: Python環境のセットアップ
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 依存ライブラリ(Playwright)のインストール
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      - name: 蓄電池設定自動化スクリプトの実行
+        env:
+          KP_USER: ${{ secrets.KP_USER }}
+          KP_PASS: ${{ secrets.KP_PASS }}
+          MODE: ${{ inputs.mode }}
+          START_HOUR: ${{ inputs.start_hour }}
+          START_MINUTE: ${{ inputs.start_minute }}
+          END_HOUR: ${{ inputs.end_hour }}
+          END_MINUTE: ${{ inputs.end_minute }}
+        run: |
+          touch error_log.txt
+          python automate_battery.py
+
+      # エラー発生時にスクリーンショットとHTMLをGitHubに保存する
+      - name: 【調査用】エラー時のスクリーンショットを保存
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-evidences
+          path: |
+            error_screenshot.png
+            error_page.html
+            error_log.txt
+          retention-days: 7
+
+      - name: 【成功時】メール通知
+        if: success()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: 【成功】蓄電池の${{ inputs.mode == 'green' && 'グリーン' || '経済' }}モード設定完了
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions Automator
+          body: file://result_summary.txt
+
+      - name: 【失敗時】エラーメール通知
+        if: failure()
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: 【エラー】蓄電池の設定更新に失敗しました
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions Automator
+          body: file://error_log.txt
