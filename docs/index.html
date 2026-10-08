@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>蓄電池モード設定</title>
+<style>
+  :root { --bg:#f4f6f8; --card:#fff; --text:#1c2733; --muted:#6b7785; --line:#d8dee4;
+          --green:#2e9e5b; --econ:#2b6fd6; --danger:#c0392b; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#12181e; --card:#1b242d; --text:#e8edf2; --muted:#93a0ad; --line:#2d3945; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--text);
+         font-family:-apple-system,BlinkMacSystemFont,"Hiragino Sans","Yu Gothic UI",Meiryo,sans-serif; }
+  main { max-width:480px; margin:0 auto; }
+  h1 { font-size:1.25rem; margin:8px 0 16px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:1rem; margin:0 0 12px; }
+  .row { display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+  .row label.name { width:6.5em; font-size:.95rem; }
+  select, input[type=text], input[type=password] {
+    font-size:1rem; padding:10px; border:1px solid var(--line); border-radius:8px;
+    background:var(--bg); color:var(--text); }
+  select { min-width:5em; }
+  .sep { color:var(--muted); }
+  button.mode { width:100%; font-size:1.1rem; font-weight:700; color:#fff; border:0;
+                border-radius:10px; padding:16px; cursor:pointer; margin-top:4px; }
+  button.green { background:var(--green); }
+  button.econ  { background:var(--econ); }
+  button:disabled { opacity:.5; cursor:not-allowed; }
+  .hint { font-size:.8rem; color:var(--muted); margin:6px 0 0; line-height:1.5; }
+  #status { min-height:1.5em; font-size:.95rem; line-height:1.5; }
+  #status.ok { color:var(--green); } #status.err { color:var(--danger); }
+  details summary { cursor:pointer; font-weight:600; }
+  details .field { margin-top:12px; }
+  details .field label { display:block; font-size:.85rem; color:var(--muted); margin-bottom:4px; }
+  details .field input { width:100%; }
+  a { color:var(--econ); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🔋 蓄電池モード設定</h1>
+
+  <section class="card">
+    <h2>グリーンモード</h2>
+    <button id="btnGreen" class="mode green">グリーンモードに設定</button>
+    <p class="hint">充電時間は月に応じて自動設定されます（4〜9月 06:00〜16:00／10〜3月 06:30〜15:30）。</p>
+  </section>
+
+  <section class="card">
+    <h2>経済モード</h2>
+    <div class="row">
+      <label class="name" for="startHour">充電開始</label>
+      <select id="startHour"></select><span class="sep">時</span>
+      <select id="startMinute"></select><span class="sep">分</span>
+    </div>
+    <div class="row">
+      <label class="name" for="endHour">充電終了</label>
+      <select id="endHour"></select><span class="sep">時</span>
+      <select id="endMinute"></select><span class="sep">分</span>
+    </div>
+    <button id="btnEcon" class="mode econ">経済モードに設定</button>
+  </section>
+
+  <div class="card"><div id="status" role="status" aria-live="polite"></div></div>
+
+  <details class="card" id="settings">
+    <summary>接続設定（GitHub）</summary>
+    <div class="field">
+      <label for="repo">リポジトリ（オーナー/リポジトリ名）</label>
+      <input type="text" id="repo" placeholder="your-name/chikuden" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="ref">ブランチ</label>
+      <input type="text" id="ref" value="main" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="workflow">ワークフローファイル名</label>
+      <input type="text" id="workflow" value="battery_setup.yml" autocomplete="off">
+    </div>
+    <div class="field">
+      <label for="token">GitHubトークン（Actions: Read and write のみ付与したFine-grained PAT）</label>
+      <input type="password" id="token" autocomplete="off">
+    </div>
+    <p class="hint">この端末のブラウザ(localStorage)にのみ保存されます。</p>
+  </details>
+</main>
+
+<script>
+(function () {
+  const $ = (id) => document.getElementById(id);
+  const KEY = "chikuden.settings.v1";
+  const pad = (n) => String(n).padStart(2, "0");
+
+  // コンボボックスの選択肢を作成
+  function fill(sel, values, selected) {
+    values.forEach((v) => {
+      const o = document.createElement("option");
+      o.value = o.textContent = v;
+      if (v === selected) o.selected = true;
+      sel.appendChild(o);
+    });
+  }
+  const hours = Array.from({ length: 24 }, (_, i) => pad(i));
+  const minutes = ["00", "30"];
+  fill($("startHour"), hours, "05");  fill($("startMinute"), minutes, "00");
+  fill($("endHour"), hours, "15");    fill($("endMinute"), minutes, "00");
+
+  // 接続設定の保存・復元
+  const fields = ["repo", "ref", "workflow", "token", "startHour", "startMinute", "endHour", "endMinute"];
+  try {
+    const saved = JSON.parse(localStorage.getItem(KEY) || "{}");
+    fields.forEach((f) => { if (saved[f]) $(f).value = saved[f]; });
+  } catch (e) {}
+  function save() {
+    try {
+      const data = {};
+      fields.forEach((f) => (data[f] = $(f).value));
+      localStorage.setItem(KEY, JSON.stringify(data));
+    } catch (e) {}
+  }
+  fields.forEach((f) => $(f).addEventListener("change", save));
+  if (!$("repo").value.trim() || !$("token").value.trim()) $("settings").open = true;
+
+  function setStatus(msg, cls) {
+    const el = $("status");
+    el.className = cls || "";
+    el.innerHTML = msg;
+  }
+  function setBusy(b) { $("btnGreen").disabled = b; $("btnEcon").disabled = b; }
+
+  async function dispatch(inputs, label) {
+    const repo = $("repo").value.trim();
+    const token = $("token").value.trim();
+    const ref = $("ref").value.trim() || "main";
+    const wf = $("workflow").value.trim() || "battery_setup.yml";
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) {
+      $("settings").open = true;
+      setStatus("「接続設定」でリポジトリとトークンを入力してください。", "err");
+      return;
+    }
+    save();
+    setBusy(true);
+    setStatus("送信中…");
+    try {
+      const res = await fetch(
+        `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(wf)}/dispatches`,
+        {
+          method: "POST",
+          headers: {
+            "Accept": "application/vnd.github+json",
+            "Authorization": `Bearer ${token}`,
+            "X-GitHub-Api-Version": "2022-11-28",
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({ ref, inputs })
+        }
+      );
+      if (res.status === 204) {
+        setStatus(`${label}の設定をGitHub Actionsに依頼しました。` +
+          `<br><a href="https://github.com/${repo}/actions/workflows/${encodeURIComponent(wf)}" target="_blank" rel="noopener">実行状況を確認</a>` +
+          `（完了時にメールが届きます）`, "ok");
+      } else {
+        let detail = "";
+        try { detail = (await res.json()).message || ""; } catch (e) {}
+        setStatus(`失敗しました（HTTP ${res.status}）${detail ? "：" + detail : ""}`, "err");
+      }
+    } catch (e) {
+      setStatus("通信エラー：" + e.message, "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  $("btnGreen").addEventListener("click", () => {
+    if (!confirm("グリーンモードに設定します。よろしいですか？\n（設定は即時反映されます）")) return;
+    // 時刻は空欄 → Python側で月に応じて自動設定
+    dispatch({ mode: "green" }, "グリーンモード");
+  });
+
+  $("btnEcon").addEventListener("click", () => {
+    const sh = $("startHour").value, sm = $("startMinute").value;
+    const eh = $("endHour").value, em = $("endMinute").value;
+    if (`${sh}${sm}` >= `${eh}${em}`) {
+      setStatus("充電終了時刻は開始時刻より後にしてください。", "err");
+      return;
+    }
+    if (!confirm(`経済モード（充電 ${sh}:${sm} 〜 ${eh}:${em}）に設定します。よろしいですか？\n（設定は即時反映されます）`)) return;
+    dispatch({ mode: "economy", start_hour: sh, start_minute: sm, end_hour: eh, end_minute: em }, "経済モード");
+  });
+})();
+</script>
+</body>
+</html>
