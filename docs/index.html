@@ -87,7 +87,7 @@
       <span><i class="sw" style="background:var(--normal)"></i>13円/kWh以上</span>
     </div>
     <div id="chartInfo">グラフをクリックすると、その時刻から充電する設定を経済モードのコンボボックスに入力します。</div>
-    <button type="button" id="btnReload" class="small">価格データを再読込</button>
+    <button type="button" id="btnReload" class="small">価格データを再読込（JEPXから取得）</button>
   </section>
 
   <details class="card" id="settings">
@@ -256,12 +256,12 @@
     return null;
   }
 
-  async function initChart() {
+  async function initChart(preloaded) {
     const cap = $("chartCaption"), meta = $("chartMeta"), svg = $("chart");
     cap.textContent = "読み込み中…"; meta.textContent = "";
     chartState = { prices: null, sel: null };
     svg.innerHTML = "";
-    const data = await loadPrices();
+    const data = preloaded || await loadPrices();
     if (!data || !data.days) {
       cap.textContent = "価格データを読み込めませんでした。";
       meta.textContent = "Actionsの「Fetch JEPX Chubu Prices」を一度手動実行し、反映後に再読込してください。";
@@ -379,8 +379,94 @@
       `経済モード設定: 開始 <b>${startLabel}</b>（${START_OFFSET_MIN > 0 && i > 0 ? "コマの開始の" + START_OFFSET_MIN + "分前" : "コマの開始時刻"}） ／ 終了 <b>${slotTime(endIdx)}</b>（${note}）`;
   }
 
-  $("btnReload").addEventListener("click", initChart);
-  $("repo").addEventListener("change", initChart);
+  // ===== JEPXから最新価格を取得して再表示 =====
+  // ブラウザからjepx.jpへ直接アクセスできない(CORS)ため、取得用ワークフローをActionsで実行し、
+  // 完了後に保存されたJSONをGitHub APIから読み直す。
+  const FETCH_WORKFLOW = "fetch_jepx.yml";
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  async function loadPricesViaApi() {
+    const repo = $("repo").value.trim(), ref = $("ref").value.trim() || "main", token = $("token").value.trim();
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) return null;
+    const url = `https://api.github.com/repos/${repo}/contents/docs/jepx_chubu.json?ref=${encodeURIComponent(ref)}`;
+    // トークンが無効でも公開リポジトリは読めるよう、トークン無しでも再試行する
+    for (const useToken of token ? [true, false] : [false]) {
+      const headers = { "Accept": "application/vnd.github.raw+json", "X-GitHub-Api-Version": "2022-11-28" };
+      if (useToken) headers.Authorization = `Bearer ${token}`;
+      try {
+        const r = await fetch(url, { headers, cache: "no-store" });
+        if (r.ok) return await r.json();
+      } catch (e) {}
+    }
+    return null;
+  }
+
+  async function refreshFromJepx() {
+    const repo = $("repo").value.trim(), ref = $("ref").value.trim() || "main", token = $("token").value.trim();
+    const info = $("chartInfo"), btn = $("btnReload");
+    if (!/^[\w.-]+\/[\w.-]+$/.test(repo) || !token) {
+      $("settings").open = true;
+      info.innerHTML = `<span class="warn">JEPXから取得するには「接続設定」でリポジトリとトークンを入力してください。</span>`;
+      return;
+    }
+    save();
+    const api = `https://api.github.com/repos/${repo}/actions/workflows/${encodeURIComponent(FETCH_WORKFLOW)}`;
+    const h = { "Accept": "application/vnd.github+json", "Authorization": `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28" };
+    btn.disabled = true;
+    try {
+      info.textContent = "JEPXの最新データ取得をGitHub Actionsに依頼しています…";
+      // 依頼前の最新の実行IDを控え、それより新しい実行を自分の依頼分として待つ
+      let lastId = 0;
+      const r0 = await fetch(`${api}/runs?per_page=1`, { headers: h, cache: "no-store" });
+      if (r0.ok) { const j = await r0.json(); lastId = (j.workflow_runs[0] || {}).id || 0; }
+
+      const rd = await fetch(`${api}/dispatches`, {
+        method: "POST", headers: { ...h, "Content-Type": "application/json" }, body: JSON.stringify({ ref })
+      });
+      if (rd.status !== 204) {
+        let detail = ""; try { detail = (await rd.json()).message || ""; } catch (e) {}
+        info.innerHTML = `<span class="warn">取得の依頼に失敗しました（HTTP ${rd.status}）${detail ? "：" + detail : ""}</span>`;
+        return;
+      }
+
+      let run = null;
+      const deadline = Date.now() + 150000;
+      while (Date.now() < deadline) {
+        await sleep(3000);
+        try {
+          const r = await fetch(`${api}/runs?per_page=5`, { headers: h, cache: "no-store" });
+          if (!r.ok) continue;
+          const j = await r.json();
+          run = j.workflow_runs.find((x) => x.id > lastId && x.event === "workflow_dispatch") || null;
+          if (run) {
+            info.textContent = "JEPXから取得中…（" + (run.status === "completed" ? "完了" : "実行中") + "）";
+            if (run.status === "completed") break;
+          }
+        } catch (e) {}
+      }
+
+      if (!run || run.status !== "completed") {
+        info.innerHTML = `<span class="warn">取得の完了を確認できませんでした。</span> <a href="https://github.com/${repo}/actions/workflows/${encodeURIComponent(FETCH_WORKFLOW)}" target="_blank" rel="noopener">Actionsの実行状況</a>を確認してください。`;
+        return;
+      }
+      if (run.conclusion !== "success") {
+        info.innerHTML = `<span class="warn">JEPXからの取得に失敗しました（${run.conclusion}）。</span> <a href="${run.html_url}" target="_blank" rel="noopener">実行ログを確認</a>`;
+        return;
+      }
+
+      // 保存されたJSONをAPI経由で読み直して再表示（Pagesの反映待ちを避ける）
+      const data = await loadPricesViaApi();
+      await initChart(data || undefined);
+      info.textContent = "JEPXの最新データを取得して再表示しました。";
+    } catch (e) {
+      info.innerHTML = `<span class="warn">通信エラー：${e.message}</span>`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  $("btnReload").addEventListener("click", refreshFromJepx);
+  $("repo").addEventListener("change", () => initChart());
   initChart();
 })();
 </script>

@@ -37,6 +37,14 @@ WEBページのボタン → GitHub API（workflow_dispatch）→ GitHub Actions
   取得方法はJEPX-main（動作確認済み）に合わせ、暦年ごとの `spot_YYYY.csv` を直接取得し、失敗時はJEPXのページからCSVリンクを探索します。
   GitHub自身のcronは遅れることがあるため、JEPX-mainと同様に外部cronサービスから `fetch_jepx.yml` の `workflow_dispatch` を送ることもできます。
 
+### 「価格データを再読込（JEPXから取得）」ボタン
+
+ブラウザからは `jepx.jp` に直接アクセスできないため、ボタンを押すと次の順で処理します。
+
+1. `fetch_jepx.yml` をGitHub APIで実行（トークンの Actions: Read and write 権限を使用）
+2. 実行の完了を待つ（最大約2.5分）
+3. 保存された `docs/jepx_chubu.json` をGitHub APIで読み直してグラフを再表示（Pagesの反映待ちなし）
+
 ## 手動実行
 
 Actions タブ → Battery Setup Automation → Run workflow からも、モードと時刻を指定して実行できます。
