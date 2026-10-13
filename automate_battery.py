@@ -70,6 +70,7 @@ def run_automation():
 
     mode, sh, sm, eh, em = get_settings()
     mode_label = MODE_LABELS[mode]
+    reserved_at = (os.environ.get("RESERVED_AT") or "").strip()  # 予約実行の場合のみ設定される
     print(f"設定内容: {mode_label} / 充電 {sh}:{sm} - {eh}:{em}")
 
     with sync_playwright() as p:
@@ -196,6 +197,8 @@ def run_automation():
                 summary = f"蓄電池の設定（{mode_label}、{sh}:{sm}-{eh}:{em}）が正常に完了しました。"
             else:
                 summary = f"蓄電池の設定（{mode_label}）が正常に完了しました。"
+            if reserved_at:
+                summary = f"【予約実行】実行予定 {reserved_at} 分\n" + summary
             with open("result_summary.txt", "w", encoding="utf-8") as f:
                 f.write(summary)
             print("全ての設定が正常に完了しました。")
@@ -211,7 +214,8 @@ def run_automation():
 
             error_details = traceback.format_exc()
             with open("error_log.txt", "w", encoding="utf-8") as f:
-                f.write(f"自動化スクリプト実行中にエラーが発生しました。（{mode_label} {sh}:{sm}-{eh}:{em}）\n\n{error_details}")
+                prefix = f"【予約実行】実行予定 {reserved_at} 分\n" if reserved_at else ""
+                f.write(f"{prefix}自動化スクリプト実行中にエラーが発生しました。（{mode_label} {sh}:{sm}-{eh}:{em}）\n\n{error_details}")
             print("エラーが発生したため中断しました。")
             raise e
         finally:
