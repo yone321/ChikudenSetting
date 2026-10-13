@@ -1,0 +1,126 @@
+name: Reservation Runner
+
+# 実行予定時刻を過ぎた予約を確認し、あれば蓄電池の設定を実行する。
+# GitHubのcronは数十分遅れることがある。より正確に動かしたい場合は、外部cronサービスから
+# このワークフローの workflow_dispatch を呼び出してもよい（下のscheduleは予備として残せる）。
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '*/10 * * * *'
+
+permissions:
+  contents: write
+
+# 同時に2つ動いて同じ予約を二重実行しないよう直列化する（待機中の定期実行が置き換わっても問題ない）
+concurrency:
+  group: reservation-run
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v3
+
+      - name: 実行予定時刻を過ぎた予約を確認
+        id: due
+        run: python3 reservation.py due
+
+      - name: 確認結果（実行中／失効）を記録
+        run: bash commit_reservations.sh "Reservation status update"
+
+      - name: 【失効】予約が実行されなかったことをメール通知
+        if: steps.due.outputs.expired == 'true'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: 【失効】蓄電池の予約が実行されませんでした
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions Automator
+          body: file://expired_summary.txt
+
+      - name: Python環境のセットアップ
+        if: steps.due.outputs.found == 'true'
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: 依存ライブラリ(Playwright)のインストール
+        if: steps.due.outputs.found == 'true'
+        run: |
+          pip install playwright
+          playwright install chromium
+
+      - name: 予約された蓄電池設定の実行
+        id: battery
+        if: steps.due.outputs.found == 'true'
+        continue-on-error: true
+        env:
+          KP_USER: ${{ secrets.KP_USER }}
+          KP_PASS: ${{ secrets.KP_PASS }}
+          MODE: ${{ steps.due.outputs.mode }}
+          START_HOUR: ${{ steps.due.outputs.start_hour }}
+          START_MINUTE: ${{ steps.due.outputs.start_minute }}
+          END_HOUR: ${{ steps.due.outputs.end_hour }}
+          END_MINUTE: ${{ steps.due.outputs.end_minute }}
+          RESERVED_AT: ${{ steps.due.outputs.run_at }}
+        run: |
+          touch error_log.txt
+          python automate_battery.py
+
+      - name: 実行結果を予約に記録
+        if: steps.due.outputs.found == 'true'
+        env:
+          RES_ID: ${{ steps.due.outputs.id }}
+          RES_RESULT: ${{ steps.battery.outcome }}
+        run: |
+          python3 reservation.py finish
+          bash commit_reservations.sh "Reservation result"
+
+      - name: 【調査用】エラー時のスクリーンショットを保存
+        if: steps.battery.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: error-evidences
+          path: |
+            error_screenshot.png
+            error_page.html
+            error_log.txt
+          retention-days: 7
+
+      - name: 【成功時】メール通知
+        if: steps.battery.outcome == 'success'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: 【成功】予約実行：蓄電池の${{ steps.due.outputs.mode == 'green' && 'グリーン' || '経済' }}モード設定完了
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions Automator
+          body: file://result_summary.txt
+
+      - name: 【失敗時】エラーメール通知
+        if: steps.battery.outcome == 'failure'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.SMTP_USER }}
+          password: ${{ secrets.SMTP_PASS }}
+          subject: 【エラー】予約した蓄電池の設定更新に失敗しました
+          to: ${{ secrets.MAIL_TO }}
+          from: GitHub Actions Automator
+          body: file://error_log.txt
+
+      - name: 設定に失敗した場合はこの実行も失敗として表示
+        if: steps.battery.outcome == 'failure'
+        run: exit 1

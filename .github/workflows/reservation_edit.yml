@@ -1,0 +1,77 @@
+name: Reservation Edit
+
+# WEBページから予約の追加・取消を行う（docs/reservations/ にJSONを保存してコミットする）
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: '操作（add=予約追加 / cancel=予約取消）'
+        required: true
+        default: 'add'
+        type: choice
+        options:
+          - add
+          - cancel
+      mode:
+        description: '蓄電動作モード（add時のみ。green / economy）'
+        required: false
+        default: 'economy'
+        type: choice
+        options:
+          - green
+          - economy
+      start_hour:
+        description: '充電開始の時（add時。グリーンモードは空欄で月に応じて自動）'
+        required: false
+        default: ''
+        type: string
+      start_minute:
+        description: '充電開始の分'
+        required: false
+        default: ''
+        type: string
+      end_hour:
+        description: '充電終了の時'
+        required: false
+        default: ''
+        type: string
+      end_minute:
+        description: '充電終了の分'
+        required: false
+        default: ''
+        type: string
+      run_at:
+        description: '実行予定日時（add時。例: 2026-10-14T17:30:00+09:00）'
+        required: false
+        default: ''
+        type: string
+      reservation_id:
+        description: '取り消す予約ID（cancel時）'
+        required: false
+        default: ''
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  edit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: リポジトリのチェックアウト
+        uses: actions/checkout@v3
+
+      - name: 予約の追加／取消
+        env:
+          ACTION: ${{ inputs.action }}
+          RES_MODE: ${{ inputs.mode }}
+          RES_START_HOUR: ${{ inputs.start_hour }}
+          RES_START_MINUTE: ${{ inputs.start_minute }}
+          RES_END_HOUR: ${{ inputs.end_hour }}
+          RES_END_MINUTE: ${{ inputs.end_minute }}
+          RES_RUN_AT: ${{ inputs.run_at }}
+          RES_ID: ${{ inputs.reservation_id }}
+        run: python3 reservation.py "$ACTION"
+
+      - name: 変更をコミット
+        run: bash commit_reservations.sh "Reservation ${{ inputs.action }}"
