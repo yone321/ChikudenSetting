@@ -1,7 +1,7 @@
 # 蓄電池簡易設定　ChikudenSetting
 
 家庭用蓄電池の「遠隔モニタリングサービス」にログインし、蓄電動作モードを設定するGitHub Actionsプログラムです。
-`docs/index.html` のWEBページから、グリーンモード／経済モードをボタン一つで設定できます。
+`docs/index.html` の([WEBページ](https://yone321.github.io/ChikudenSetting/)）から、グリーンモード／経済モードをボタン一つで設定できます。
 
 ## 仕組み
 
