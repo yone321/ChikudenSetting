@@ -1,6 +1,6 @@
 {
  "id": "20261014-0930-green-b7ba",
- "status": "running",
+ "status": "failed",
  "mode": "green",
  "start_hour": "",
  "start_minute": "",
@@ -8,5 +8,7 @@
  "end_minute": "",
  "run_at": "2026-10-14T09:30+09:00",
  "created": "2026-10-14T09:01:07+09:00",
- "started_at": "2026-10-14T09:30:36+09:00"
+ "started_at": "2026-10-14T09:30:36+09:00",
+ "finished_at": "2026-10-14T09:32:21+09:00",
+ "message": "蓄電池の設定に失敗しました（Actionsのログを確認してください）"
 }
