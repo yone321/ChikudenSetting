@@ -1,0 +1,11 @@
+{
+ "id": "20261014-1630-economy-8afa",
+ "status": "pending",
+ "mode": "economy",
+ "start_hour": "11",
+ "start_minute": "50",
+ "end_hour": "13",
+ "end_minute": "30",
+ "run_at": "2026-10-14T16:30+09:00",
+ "created": "2026-10-14T12:50:17+09:00"
+}
