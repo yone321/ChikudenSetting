@@ -176,13 +176,33 @@ def run_automation():
                 page.locator("a, button").filter(has_text="次に進む").first.click(timeout=5000)
             except:
                 page.get_by_text("次に進む", exact=True).first.click()
-            page.wait_for_timeout(2000)
-
-            # １０．「設定」をクリック
+            # 画面遷移を待ち、変更なしメッセージが出たか確認する。
+            # 同じ設定値が既に適用されている場合、確認画面には進まず
+            # 「設定値が変更されていません。」が表示されることがある。
+            unchanged_message = "設定値が変更されていません。"
+            unchanged = False
             try:
-                page.locator("a, button").filter(has_text="設定").first.click(timeout=5000)
-            except:
-                page.get_by_text("設定", exact=True).first.click()
+                page.get_by_text(unchanged_message, exact=True).wait_for(
+                    state="visible", timeout=4000
+                )
+                unchanged = True
+                print("設定値に変更がないことを検出しました。設定操作をスキップします。")
+            except Exception:
+                # 変更なしメッセージがなければ、確認画面の「設定」へ進む。
+                pass
+
+            if not unchanged:
+                # 確認画面に進んだことを確認してから「設定」をクリックする。
+                try:
+                    page.get_by_text("設定", exact=True).first.wait_for(
+                        state="visible", timeout=10000
+                    )
+                    page.get_by_text("設定", exact=True).first.click(timeout=5000)
+                except Exception:
+                    raise RuntimeError(
+                        "「次に進む」の後、設定確認画面にも「設定値が変更されていません」"
+                        "メッセージにも到達しませんでした。画面遷移を確認してください。"
+                    )
 
             # １１．処理中待機後、「ログアウト」をクリック
             if loading.count() > 0 and loading.first.is_visible():
@@ -193,7 +213,18 @@ def run_automation():
             except:
                 page.get_by_text("ログアウト", exact=True).first.click()
 
-            if has_time_fields:
+            if unchanged:
+                if has_time_fields:
+                    summary = (
+                        f"蓄電池の設定（{mode_label}、{sh}:{sm}-{eh}:{em}）は"
+                        "既に指定値と同じため、変更操作を行いませんでした。"
+                    )
+                else:
+                    summary = (
+                        f"蓄電池の設定（{mode_label}）は既に指定値と同じため、"
+                        "変更操作を行いませんでした。"
+                    )
+            elif has_time_fields:
                 summary = f"蓄電池の設定（{mode_label}、{sh}:{sm}-{eh}:{em}）が正常に完了しました。"
             else:
                 summary = f"蓄電池の設定（{mode_label}）が正常に完了しました。"
